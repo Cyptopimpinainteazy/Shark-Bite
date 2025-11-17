@@ -1,0 +1,145 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Run gotelemetry
+        run: |
+          go run golang.org/x/telemetry/cmd/gotelemetry@latest on || true
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+      - name: Install Go proto plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Install dependencies
+        run: |
+          cd backend/pool && go mod download
+      - name: Generate protos
+        run: |
+          ./scripts/generate-protos.sh
+      - name: Verify proto generation
+        run: |
+          git diff --exit-code stratum-go/internal/validatorpb/ backend/pool/protos/ || (echo "Proto files not up to date. Run ./scripts/generate-protos.sh" && exit 1)
+      - name: Run Go tests
+        run: |
+          cd backend/pool && go test ./... -v
+      - name: Build Rust validator
+        run: |
+          cd validator-rs && cargo build --release
+      - name: Run Rust tests
+        run: |
+          cd validator-rs && cargo test --release
+      - name: Build sharkpool-miner (no default features)
+        run: |
+          cd sharkpool-miner
+          cargo build --no-default-features --release
+      - name: Lint
+        run: |
+          cd backend/pool && go vet ./...
+      - name: Security scan
+        run: |
+          cd backend/pool && go install github.com/securego/gosec/v2/cmd/gosec@latest && gosec ./...
+
+  build-gpu:
+    name: GPU Build (CUDA)
+    runs-on: ubuntu-latest
+    # Use a CUDA-enabled container so nvcc is available for build-time checks
+    container:
+      image: nvidia/cuda:12.2.2-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+      - name: Build sharkpool-miner with GPU (cuda)
+        run: |
+          cd sharkpool-miner
+          cargo clean || true
+          # Avoid GUI default feature to prevent GUI-only dependency build
+          cargo build --no-default-features --features gpu-cuda --release
+      - name: Build validator-rs with CUDA features
+        run: |
+          cd validator-rs
+          cargo clean || true
+          cargo build --release
+  build-gui:
+    name: GUI Build (manual only)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build GUI binaries
+        run: |
+          cd sharkpool-miner
+          cargo clean || true
+          cargo build --features gui --release
+
+  e2e:
+    name: CPU E2E Smoke Test (Docker Compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Docker and Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker.io docker-compose
+          docker --version
+          docker-compose --version
+      - name: Run e2e smoke test
+        run: |
+          chmod +x ./tests/e2e/run_e2e.sh
+          ./tests/e2e/run_e2e.sh
+
+  gpu-runtime:
+    name: GPU Runtime Tests (self-hosted)
+    runs-on: [self-hosted, linux, x64, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify GPU tools and versions
+        run: |
+          echo "Running nvidia-smi"
+          nvidia-smi || true
+          echo "NVCC:"
+          nvcc --version || true
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Run GPU runtime smoke test script
+        run: |
+          chmod +x ./tests/ci/test_gpu_runtime.sh
+          ./tests/ci/test_gpu_runtime.sh
