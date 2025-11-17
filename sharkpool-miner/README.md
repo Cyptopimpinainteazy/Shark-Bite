@@ -28,10 +28,56 @@
 - **GPU Monitoring**: Real-time temperature, power, utilization tracking
 
 ### ⚙️ **Mining Algorithms**
-- **Fishhash**: Keccak-256 optimized for Ironfish mining
+- **Fishhash**: Keccak-256 optimized for Ironfish mining (see GPU Mining below)
 - **SHA256d**: Double SHA-256 for Bitcoin-style mining
 - **Blake3**: Modern high-performance hash function
 - **Argon2id**: Memory-hard password hashing function
+
+### 🎮 **GPU Mining - Fishhash**
+
+**⚠️ IMPORTANT**: The current Fishhash implementation in SharkPool Miner is a **simplified version** using only Keccak-256 hashing, designed for SharkPool's multi-algorithm test environment.
+
+**This implementation is NOT compatible with production Ironfish mining**, which requires the full memory-hard Fishhash algorithm with 4.5GB DAG generation and 32-iteration Blake3 loops.
+
+#### **Requirements**
+- **NVIDIA GPUs**: CUDA 11.0+ (RTX 20/30/40 series recommended)
+- **AMD/Intel GPUs**: OpenCL 1.2+ compatible hardware
+- **GPU Memory**: Minimum 4GB VRAM (6GB+ recommended)
+
+#### **Build Instructions**
+```bash
+# NVIDIA CUDA support
+cargo build --release --features gpu-cuda
+
+# AMD/Intel OpenCL support
+cargo build --release --features gpu-opencl
+
+# Both backends
+cargo build --release --features gpu-cuda,gpu-opencl
+```
+
+#### **Expected Performance**
+- **RTX 3070**: >1 GH/s (1 billion hashes/second)
+- **RTX 3080**: >1.5 GH/s
+- **RTX 3090**: >2 GH/s
+- **AMD RX 6800 XT**: ~900 MH/s
+
+#### **Full Fishhash Implementation**
+For production Ironfish mining, users should use established miners like **lolMiner** or **Rigel**.
+
+See `FISHHASH_ROADMAP.md` for details on implementing full memory-hard Fishhash in SharkPool Miner (4.5GB DAG + Blake3 iterations).
+
+#### **Testing**
+```bash
+# Run Fishhash GPU tests
+cargo test --features gpu-cuda test_fishhash_ -- --nocapture
+
+# Validation tests
+cargo test --features gpu-cuda fishhash_validation -- --nocapture
+
+# Integration tests (performance/benchmarking)
+cargo test --features gpu-cuda fishhash_integration -- --nocapture
+```
 
 ### 🌐 **Pool Integration**
 - **Stratum V1/V2**: Full stratum protocol support
